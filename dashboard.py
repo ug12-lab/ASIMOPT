@@ -106,8 +106,7 @@ if hesapla:
             
             fig_fiyat = go.Figure()
             fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['PTF'], mode='lines', name='PTF (Piyasa Takas)', line=dict(color='blue')))
-            fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['SMF'], mode='lines', name='SMF (Sistem Marjinal)', line=dict(color='orange', opacity=0.7)))
-            
+      fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['SMF'], mode='lines', name='SMF (Sistem Marjinal)', line=dict(color='orange'), opacity=0.7))
             if 'NDF_neg' in plot_df.columns and 'PDF_poz' in plot_df.columns:
                 fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['NDF_neg'], mode='lines', name='NDF (Eksik Üretim Cezası)', line=dict(color='red', dash='dot')))
                 fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['PDF_poz'], mode='lines', name='PDF (Fazla Üretim Geliri)', line=dict(color='green', dash='dot')))
