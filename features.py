@@ -51,7 +51,6 @@ def veriyi_yukle(dosya_yolu=None):
 
     df = df.sort_values("ts").reset_index(drop=True)
 
-    # Gerçekleşmiş uzlaştırma fiyatlarından birim dengesizlik cezalarının hesabı
     if "pi_eksik" not in df.columns:
         df["pi_eksik"] = (df["NDF_neg"] - df["PTF"]).clip(lower=0.0)
     if "pi_fazla" not in df.columns:
@@ -61,10 +60,8 @@ def veriyi_yukle(dosya_yolu=None):
     if "tau" not in df.columns:
         df["tau"] = np.where(toplam_ceza > 0, df["pi_fazla"] / toplam_ceza, 0.5)
     else:
-        # Eksik (pi_eksik + pi_fazla == 0 olan 60 saat) değerleri 0.5 (simetrik) ile doldur
         df["tau"] = df["tau"].fillna(0.5)
 
-    # Gerçekleşmiş tau* değerini [0.05, 0.95] aralığında sınırla (uç değer kararlılığı)
     df["tau_gercek"] = df["tau"].clip(0.05, 0.95)
 
     return df
@@ -77,7 +74,6 @@ def oznitelikleri_uret(df, hedef_sutun="ruzgar"):
     """
     data = df.copy()
 
-    # 1. Takvimsel ve Döngüsel (Cyclical) Öznitelikler
     data["saat"] = data["ts"].dt.hour
     data["haftanin_gunu"] = data["ts"].dt.dayofweek
     data["ay"] = data["ts"].dt.month
@@ -89,24 +85,21 @@ def oznitelikleri_uret(df, hedef_sutun="ruzgar"):
     data["sin_ay"] = np.sin(2 * np.pi * data["ay"] / 12.0)
     data["cos_ay"] = np.cos(2 * np.pi * data["ay"] / 12.0)
 
-    # 2. Üretim Gecikmeleri (Teklif anında bilinen: t-24 ve öncesi)
     for lag in [24, 25, 48, 72, 168]:
         data[f"{hedef_sutun}_lag{lag}"] = data[hedef_sutun].shift(lag)
 
-    # 24 saat gecikmeli hareketli istatistikler
     kaydirilmis_uretim = data[hedef_sutun].shift(24)
     data[f"{hedef_sutun}_roll24_mean"] = kaydirilmis_uretim.rolling(24).mean()
     data[f"{hedef_sutun}_roll24_std"] = kaydirilmis_uretim.rolling(24).std()
     data[f"{hedef_sutun}_roll168_mean"] = kaydirilmis_uretim.rolling(168).mean()
 
-    if "uretim_toplam" in data.columns:
+    if "uretim_toplam" in data.columns and hedef_sutun != "uretim_toplam":
         data["uretim_toplam_lag24"] = data["uretim_toplam"].shift(24)
-    if "dogalgaz" in data.columns:
+    if "dogalgaz" in data.columns and hedef_sutun != "dogalgaz":
         data["dogalgaz_lag24"] = data["dogalgaz"].shift(24)
-    if "barajli" in data.columns:
+    if "barajli" in data.columns and hedef_sutun != "barajli":
         data["barajli_lag24"] = data["barajli"].shift(24)
 
-    # 3. Sistem Yönü ve Piyasa Gecikmeleri (Önceden tahmin edilen tau_hat modeli için)
     for lag in [24, 48, 72, 168]:
         data[f"tau_lag{lag}"] = data["tau_gercek"].shift(lag)
 
@@ -120,14 +113,16 @@ def oznitelikleri_uret(df, hedef_sutun="ruzgar"):
     data["pi_eksik_lag24"] = data["pi_eksik"].shift(24)
     data["pi_fazla_lag24"] = data["pi_fazla"].shift(24)
 
-    # İlk 192 saati (lag/rolling kaynaklı NaN satırları) temizle
     data = data.dropna().reset_index(drop=True)
     return data
 
 
 def oznitelik_listeleri(hedef_sutun="ruzgar"):
-    """Üretim modeli ve Tau tahmin modeli için öznitelik listelerini döndürür."""
-    uretim_oznitelikleri = [
+    """
+    Üretim modeli ve Tau tahmin modeli için öznitelik listelerini döndürür.
+    Tekrarlı sütun isimlerini otomatik engeller.
+    """
+    uretim_adaylari = [
         "saat", "haftanin_gunu", "ay", "yilin_gunu", "hafta_sonu",
         "sin_saat", "cos_saat", "sin_ay", "cos_ay",
         f"{hedef_sutun}_lag24", f"{hedef_sutun}_lag25",
@@ -137,7 +132,7 @@ def oznitelik_listeleri(hedef_sutun="ruzgar"):
         "uretim_toplam_lag24", "dogalgaz_lag24", "barajli_lag24",
     ]
 
-    tau_oznitelikleri = [
+    tau_adaylari = [
         "saat", "haftanin_gunu", "ay", "yilin_gunu", "hafta_sonu",
         "sin_saat", "cos_saat", "sin_ay", "cos_ay",
         "tau_lag24", "tau_lag48", "tau_lag72", "tau_lag168",
@@ -146,6 +141,9 @@ def oznitelik_listeleri(hedef_sutun="ruzgar"):
         "pi_eksik_lag24", "pi_fazla_lag24",
         f"{hedef_sutun}_lag24", "uretim_toplam_lag24",
     ]
+
+    uretim_oznitelikleri = list(dict.fromkeys(uretim_adaylari))
+    tau_oznitelikleri = list(dict.fromkeys(tau_adaylari))
     return uretim_oznitelikleri, tau_oznitelikleri
 
 
