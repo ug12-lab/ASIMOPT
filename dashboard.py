@@ -1,155 +1,231 @@
+# -*- coding: utf-8 -*-
+"""
+dashboard.py
+============
+ASIMOPT - İnteraktif Model Değerlendirme, Dengesizlik Maliyeti ve DM Testi Paneli.
+Site açıldığında GitHub deposundaki birlesik_veri.csv dosyasını otomatik okur,
+features.py, model.py ve tables.py modüllerini çalıştırarak gerçek sonuçları gösterir.
+"""
+
 import streamlit as st
-import requests
 import pandas as pd
+import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import io
 
-# Sayfa Ayarları
-st.set_page_config(page_title="ASIMOPT Dashboard", layout="wide", page_icon="⚡")
+from features import veriyi_yukle
+from tables import tum_analizi_calistir
 
-# Başlık
-st.title("⚡ ASIMOPT - Dengesizlik Maliyeti Optimizasyonu")
-st.markdown("**Türkiye Elektrik Piyasasında Asimetrik Kayıp Fonksiyonu Tabanlı Üretim Tahmini**")
+st.set_page_config(
+    page_title="ASIMOPT Akademik Analiz ve Optimizasyon Paneli",
+    layout="wide",
+    page_icon="⚡",
+)
+
+st.title("⚡ ASIMOPT - Asimetrik Kayıp Fonksiyonu ve Dengesizlik Maliyeti Optimizasyonu")
+st.markdown(
+    "**Gerçekleşmiş Uzlaştırma Fiyatlarından Hesaplanan Dengesizlik Maliyetleri, "
+    "Sabit $\\tau$ ($0.3, 0.5, 0.7$), Tahmin Edilen $\\hat{\\tau}$ (Gerçekçi) ve "
+    "Gerçekleşmiş $\\tau^*$ (Üst Sınır / Oracle) Karşılaştırması**"
+)
 st.markdown("---")
 
-# Render'daki API Adresimiz
-API_URL = "https://asimopt.onrender.com/api/v1/dataset"
 
-# Sol Menü (Parametreler)
+@st.cache_data(show_spinner=False)
+def modeli_onbellekli_calistir(hedef_kaynak="ruzgar"):
+    """Modelleri eğitir ve sonuç tablolarını önbelleğe (cache) alır."""
+    ham_df = veriyi_yukle()
+    sonuclar = tum_analizi_calistir(ham_df, hedef_sutun=hedef_kaynak)
+    return ham_df, sonuclar
+
+
+# Sol Menü
 with st.sidebar:
-    st.header("⚙️ Veri Kaynağı ve Parametreler")
-    veri_kaynagi = st.radio("Veri Kaynağı Seçiniz:", ["Yerel CSV Yükle (Gelişmiş Analiz)", "Render API (Canlı Veri)"])
-    
-    uploaded_file = None
-    if veri_kaynagi == "Yerel CSV Yükle (Gelişmiş Analiz)":
-        uploaded_file = st.file_uploader("EPİAŞ / ASIMOPT Veri Setini (CSV) Yükleyin", type=['csv'])
-        st.info("İpucu: 35.088 satırlık ana veri setinizi buraya yükleyebilirsiniz.")
-    else:
-        start_date = st.date_input("Başlangıç Tarihi", datetime(2023, 1, 1))
-        end_date = st.date_input("Bitiş Tarihi", datetime(2023, 1, 7))
-        
-        st.subheader("📍 Santral Lokasyonu")
-        lokasyon = st.selectbox("Bölge Seçimi", ["Ege Bölgesi (Rüzgar)", "İç Anadolu (Güneş)", "Özel Konum Gir"])
-        
-        if lokasyon == "Ege Bölgesi (Rüzgar)":
-            lat, lon = 38.42, 27.14
-        elif lokasyon == "İç Anadolu (Güneş)":
-            lat, lon = 37.87, 32.48
-        else:
-            lat = st.number_input("Enlem", value=39.92)
-            lon = st.number_input("Boylam", value=32.85)
+    st.header("⚙️ Analiz Ayarları")
+    secilen_kaynak = st.selectbox(
+        "Tahmin Edilecek Üretim Kaynağı:",
+        options=["ruzgar", "gunes", "uretim_toplam"],
+        format_func=lambda x: {
+            "ruzgar": "🌬️ Rüzgar Üretimi (MWh)",
+            "gunes": "☀️ Güneş Üretimi (MWh)",
+            "uretim_toplam": "🏭 Toplam Üretim (MWh)",
+        }[x],
+        index=0,
+    )
+
+    st.info(
+        "📌 **Bilgi:** Veri seti (`birlesik_veri.csv` - 35.088 saat) "
+        "doğrudan sistemden otomatik yüklenmektedir. "
+        "Tüm modeller `features.py`, `model.py` ve `tables.py` üzerinden canlı hesaplanır."
+    )
+
+try:
+    with st.spinner("35.088 saatlik veri işleniyor, 6 model eğitiliyor ve Diebold-Mariano testi hesaplanıyor..."):
+        df_ham, analiz = modeli_onbellekli_calistir(secilen_kaynak)
+
+    tablo1 = analiz["tablo1_performans"]
+    tablo2 = analiz["tablo2_dm_testi"]
+    tablo3 = analiz["tablo3_sistem_yonu"]
+    test_df = analiz["test_df"]
+    tahminler = analiz["tahminler"]
+    ek = analiz["ek_bilgiler"]
+
+    # Özet Metrik Kartları
+    ref_satir = tablo1[tablo1["Model"] == "Sabit tau = 0.50 (Simetrik MAE)"].iloc[0]
+    gercekci_satir = tablo1[tablo1["Model"] == "ASIMOPT Gerçekçi (Tahmin Edilen tau_hat)"].iloc[0]
+    oracle_satir = tablo1[tablo1["Model"] == "ASIMOPT Üst Sınır / Oracle (Gerçekleşmiş tau*)"].iloc[0]
+
+    gercekci_kazanc_tl = ref_satir["Toplam Dengesizlik Maliyeti (TL)"] - gercekci_satir["Toplam Dengesizlik Maliyeti (TL)"]
+    oracle_kazanc_tl = ref_satir["Toplam Dengesizlik Maliyeti (TL)"] - oracle_satir["Toplam Dengesizlik Maliyeti (TL)"]
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Toplam Veri Seti", f"{len(df_ham):,} Saat", f"Test Seti: {len(test_df):,} Saat")
+    col2.metric(
+        "Sistem Yönü Tahmin Doğruluğu",
+        f"%{ek['yon_tahmin_dogrulugu'] * 100:.2f}",
+        "Teklif Anında (Gün Öncesi)",
+    )
+    col3.metric(
+        "ASIMOPT Gerçekçi (Tahmin Edilen τ̂) Tasarrufu",
+        f"%{gercekci_satir['Simetrik Modele Göre Tasarruf (%)']:.2f}",
+        f"{gercekci_kazanc_tl:,.0f} ₺ Kazanç",
+    )
+    col4.metric(
+        "ASIMOPT Üst Sınır (Gerçekleşmiş τ*) Tasarrufu",
+        f"%{oracle_satir['Simetrik Modele Göre Tasarruf (%)']:.2f}",
+        f"{oracle_kazanc_tl:,.0f} ₺ (Teorik Üst Sınır)",
+    )
 
     st.markdown("---")
-    hesapla = st.button("🚀 Verileri Çek ve İncele", use_container_width=True)
 
-# Ana Ekran
-if hesapla:
-    df = None
-    if veri_kaynagi == "Yerel CSV Yükle (Gelişmiş Analiz)":
-        if uploaded_file is not None:
-            with st.spinner("CSV dosyası okunuyor ve işleniyor..."):
-                df = pd.read_csv(uploaded_file)
-                if 'ts' in df.columns:
-                    df['Tarih'] = pd.to_datetime(df['ts'])
-                elif 'Tarih' in df.columns:
-                    df['Tarih'] = pd.to_datetime(df['Tarih'])
-                st.success(f"✅ CSV başarıyla yüklendi! Toplam Satır: {len(df):,}")
-        else:
-            st.warning("Lütfen sol menüden bir CSV dosyası yükleyin.")
-    else:
-        with st.spinner('ASIMOPT Render API\'sinden veriler çekiliyor...'):
-            try:
-                params = {
-                    "start_date": start_date.strftime("%Y-%m-%d"),
-                    "end_date": end_date.strftime("%Y-%m-%d"),
-                    "lat": lat,
-                    "lon": lon
-                }
-                response = requests.get(API_URL, params=params)
-                
-                if response.status_code == 200:
-                    data = response.json().get("data", [])
-                    if not data:
-                        st.warning("Bu tarih aralığında veri bulunamadı.")
-                    else:
-                        df = pd.DataFrame(data)
-                        df['Tarih'] = pd.to_datetime(df['Tarih'])
-                        st.success("✅ Veriler API'den başarıyla çekildi!")
-                else:
-                    st.error("API'ye ulaşılamadı. Sunucu uykuda olabilir.")
-            except Exception as e:
-                st.error(f"Beklenmeyen bir hata oluştu: {e}")
+    sekme1, sekme2, sekme3 = st.tabs([
+        "📋 Rapor Tabloları ve DM Testi",
+        "📊 Maliyet ve Tahmin Grafikleri",
+        "⚡ Piyasa Fiyatları ve τ* Analizi",
+    ])
 
-    # EĞER VERİ BAŞARIYLA GELDİYSE ANALİZLERİ GÖSTER
-    if df is not None:
+    with sekme1:
+        st.subheader("Tablo 1: Tüm Modellerin Performans ve Dengesizlik Maliyeti Karşılaştırması")
+        st.caption(
+            "Sabit τ (0.30, 0.50, 0.70), sistem yönünü önceden tahmin ederek τ̂ belirleyen "
+            "Gerçekçi ASIMOPT modeli ve gerçekleşmiş τ* kullanan Üst Sınır (Oracle) modeli."
+        )
+        st.dataframe(tablo1, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Tablo 1'i İndir (CSV)",
+            data=tablo1.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="tablo1_model_karsilastirma.csv",
+            mime="text/csv",
+        )
+
         st.markdown("---")
-        
-        # 2. Özet Metrikler
-        st.subheader("📊 Temel İstatistikler")
-        col1, col2, col3, col4 = st.columns(4)
-        if 'PTF' in df.columns:
-            col1.metric("Ortalama PTF", f"{df['PTF'].mean():.2f} ₺/MWh")
-        if 'SMF' in df.columns:
-            col2.metric("Ortalama SMF", f"{df['SMF'].mean():.2f} ₺/MWh")
-        if 'tau' in df.columns:
-            col3.metric("Ortalama Tau (Asimetri)", f"{df['tau'].mean():.3f}")
-        col4.metric("Veri Satır Sayısı", f"{len(df):,} Saat")
-        
-        # 3. Fiyat Grafiği (PTF vs SMF vs NDF vs PDF)
-        if 'PTF' in df.columns and 'SMF' in df.columns:
-            st.subheader("📈 Fiyat Dinamikleri")
-            
-            # Tüm veriyi çizmek tarayıcıyı yorabilir, CSV'den geliyorsa ilk 1000 saati (veya 1 ayı) çiz
-                      # Tüm veriyi çizmek tarayıcıyı yorabilir, CSV'den geliyorsa ilk 1000 saati (veya 1 ayı) çiz
-            plot_df = df.head(720) if len(df) > 720 else df
-            
-            fig_fiyat = go.Figure()
-            fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['PTF'], mode='lines', name='PTF (Piyasa Takas)', line=dict(color='blue')))
-            fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['SMF'], mode='lines', name='SMF (Sistem Marjinal)', line=dict(color='orange'), opacity=0.7))
-            if 'NDF_neg' in plot_df.columns and 'PDF_poz' in plot_df.columns:
-                fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['NDF_neg'], mode='lines', name='NDF (Eksik Üretim Cezası)', line=dict(color='red', dash='dot')))
-                fig_fiyat.add_trace(go.Scatter(x=plot_df['Tarih'], y=plot_df['PDF_poz'], mode='lines', name='PDF (Fazla Üretim Geliri)', line=dict(color='green', dash='dot')))
-                
-            fig_fiyat.update_layout(hovermode="x unified", legend_title_text='Fiyat Türü')
-            st.plotly_chart(fig_fiyat, use_container_width=True)
-            if len(df) > 720:
-                st.caption("Not: Performans için grafikte sadece ilk 1 aylık (720 saat) veri gösterilmektedir.")
+        st.subheader("Tablo 2: Diebold-Mariano (DM) İstatistiksel Anlamlılık Testi Sonuçları")
+        st.caption(
+            "Referans Model: Sabit τ = 0.50 (Simetrik MAE). Newey-West (HAC) otokorelasyon düzeltmeli "
+            "DM test istatistiği ve çift kuyruklu p-değerleri."
+        )
+        gosterilecek_t2 = tablo2.drop(columns=["p-Değeri (Sayısal)"])
+        st.dataframe(gosterilecek_t2, use_container_width=True, hide_index=True)
+        st.download_button(
+            "📥 Tablo 2'yi İndir (CSV)",
+            data=gosterilecek_t2.to_csv(index=False, encoding="utf-8-sig"),
+            file_name="tablo2_dm_testi.csv",
+            mime="text/csv",
+        )
 
-        # Üretim Kaynakları (CSV'de varsa)
-        kaynaklar = ['dogalgaz', 'ithal_komur', 'barajli', 'linyit', 'ruzgar', 'akarsu', 'gunes']
-        mevcut_kaynaklar = [k for k in kaynaklar if k in df.columns]
-        
-        if mevcut_kaynaklar:
-            st.subheader("🏭 Üretim Profili")
-            fig_uretim = px.area(plot_df, x='Tarih', y=mevcut_kaynaklar, 
-                               title="Saatlik Enerji Üretim Dağılımı (MWh)",
-                               labels={'value': 'Üretim (MWh)', 'variable': 'Kaynak'})
-            st.plotly_chart(fig_uretim, use_container_width=True)
+        if not tablo3.empty:
+            st.markdown("---")
+            st.subheader("Tablo 3: Sistem Yönüne Göre Saatlik Ortalama Dengesizlik Maliyetleri (TL/Saat)")
+            st.dataframe(tablo3, use_container_width=True, hide_index=True)
+            st.download_button(
+                "📥 Tablo 3'ü İndir (CSV)",
+                data=tablo3.to_csv(index=False, encoding="utf-8-sig"),
+                file_name="tablo3_sistem_yonu.csv",
+                mime="text/csv",
+            )
 
-        # 4. Asimetrik Kayıp Optimizasyonu Kıyaslaması
-        if 'PTF' in df.columns:
-            st.subheader("💰 Dengesizlik Maliyeti Karşılaştırması")
-            st.info("💡 Proje Raporu Bölüm 2.1 ve 4.1'de belirtildiği üzere, simetrik MSE modellerine kıyasla Asimetrik Kuantil (ASIMOPT) optimizasyonunun sağladığı finansal tasarruf simülasyonu:")
-            
-            # Simülasyon Hesaplamaları (Görsel şov amaçlı teorik veriler)
-            simetrik_maliyet = df['PTF'].sum() * 0.12  # Klasik modelin farazi dengesizlik maliyeti
-            asimetrik_maliyet = simetrik_maliyet * 0.68  # ASIMOPT'un %32 tasarruf sağladığı varsayımı
-            
-            col_bar, col_text = st.columns([2, 1])
-            with col_bar:
-                fig_bar = px.bar(
-                    x=["Klasik Simetrik Model (MSE/MAE)", "ASIMOPT (Asimetrik Kayıp)"], 
-                    y=[simetrik_maliyet, asimetrik_maliyet],
-                    color=["Klasik Simetrik Model (MSE/MAE)", "ASIMOPT (Asimetrik Kayıp)"],
-                    color_discrete_map={"Klasik Simetrik Model (MSE/MAE)": "#ef4444", "ASIMOPT (Asimetrik Kayıp)": "#22c55e"},
-                    labels={'x': 'Yapay Zeka Modeli', 'y': 'Toplam Dengesizlik Maliyeti (₺)'}
-                )
-                st.plotly_chart(fig_bar, use_container_width=True)
-            
-            with col_text:
-                st.markdown("### Optimizasyon Sonucu")
-                st.markdown(f"**Klasik Model Maliyeti:** <br> ₺{simetrik_maliyet:,.0f}", unsafe_allow_html=True)
-                st.markdown(f"**ASIMOPT Maliyeti:** <br> ₺{asimetrik_maliyet:,.0f}", unsafe_allow_html=True)
-                st.markdown(f"**🔥 Elde Edilen Tasarruf:** <br> <span style='color:green; font-size:24px'>₺{(simetrik_maliyet - asimetrik_maliyet):,.0f}</span>", unsafe_allow_html=True)
+    with sekme2:
+        st.subheader("💰 Modellerin Toplam Dengesizlik Maliyeti Karşılaştırması (TL)")
+        fig_bar = px.bar(
+            tablo1,
+            x="Model",
+            y="Toplam Dengesizlik Maliyeti (TL)",
+            color="Model",
+            text="Simetrik Modele Göre Tasarruf (%)",
+            title="Test Dönemi Toplam Dengesizlik Maliyeti ve Simetrik Modele Göre Tasarruf (%)",
+        )
+        fig_bar.update_traces(texttemplate="Tasarruf: %{text:.2f}%", textposition="outside")
+        st.plotly_chart(fig_bar, use_container_width=True)
+
+        st.subheader("📈 Saatlik Üretim Tahmini Karşılaştırması (Test Seti Son 168 Saat / 1 Hafta)")
+        son_n = 168
+        zaman_dilimi = test_df["ts"].iloc[-son_n:]
+
+        fig_pred = go.Figure()
+        fig_pred.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=test_df[secilen_kaynak].iloc[-son_n:],
+            mode="lines",
+            name="Gerçekleşen Üretim",
+            line=dict(color="black", width=2),
+        ))
+        fig_pred.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=tahminler["Sabit tau = 0.50 (Simetrik MAE)"][-son_n:],
+            mode="lines",
+            name="Sabit τ = 0.50 (Simetrik MAE)",
+            line=dict(color="#ef4444", dash="dot"),
+        ))
+        fig_pred.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=tahminler["ASIMOPT Gerçekçi (Tahmin Edilen tau_hat)"][-son_n:],
+            mode="lines",
+            name="ASIMOPT Gerçekçi (Tahmin Edilen τ̂)",
+            line=dict(color="#22c55e", width=2),
+        ))
+        fig_pred.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=tahminler["ASIMOPT Üst Sınır / Oracle (Gerçekleşmiş tau*)"][-son_n:],
+            mode="lines",
+            name="ASIMOPT Üst Sınır (Gerçekleşmiş τ*)",
+            line=dict(color="#3b82f6", dash="dash"),
+            opacity=0.8,
+        ))
+        fig_pred.update_layout(hovermode="x unified", yaxis_title="Üretim (MWh)", xaxis_title="Tarih")
+        st.plotly_chart(fig_pred, use_container_width=True)
+
+    with sekme3:
+        st.subheader("⚡ Gerçekleşmiş τ* ve Tahmin Edilen τ̂ Dinamikleri (Son 168 Saat)")
+        fig_tau = go.Figure()
+        fig_tau.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=ek["tau_gercek_test"][-son_n:],
+            mode="lines",
+            name="Gerçekleşmiş τ* (Uzlaştırma Fiyatlarından)",
+            line=dict(color="#9333ea"),
+            opacity=0.6,
+        ))
+        fig_tau.add_trace(go.Scatter(
+            x=zaman_dilimi,
+            y=ek["tau_hat_test"][-son_n:],
+            mode="lines",
+            name="Teklif Anında Tahmin Edilen τ̂ (Gerçekçi Model)",
+            line=dict(color="#eab308", width=2),
+        ))
+        fig_tau.add_hline(y=0.5, line_dash="dot", line_color="gray", annotation_text="Simetrik Eşik (τ = 0.5)")
+        fig_tau.update_layout(hovermode="x unified", yaxis_title="Asimetri Parametresi (τ)", xaxis_title="Tarih")
+        st.plotly_chart(fig_tau, use_container_width=True)
+
+        st.subheader("📈 PTF, SMF, PDF ve NDF Fiyat Dinamikleri (Son 720 Saat)")
+        plot_df = test_df.tail(720)
+        fig_fiyat = go.Figure()
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PTF"], mode="lines", name="PTF", line=dict(color="blue")))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["SMF"], mode="lines", name="SMF", line=dict(color="orange"), opacity=0.7))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["NDF_neg"], mode="lines", name="NDF (Eksik Üretim Fiyatı)", line=dict(color="red", dash="dot")))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PDF_poz"], mode="lines", name="PDF (Fazla Üretim Fiyatı)", line=dict(color="green", dash="dot")))
+        fig_fiyat.update_layout(hovermode="x unified", yaxis_title="Fiyat (TL/MWh)", xaxis_title="Tarih")
+        st.plotly_chart(fig_fiyat, use_container_width=True)
+
+except Exception as e:
+    st.error(f"Analiz çalıştırılırken bir hata oluştu: {e}")
+    st.info("Lütfen GitHub deponuzda `birlesik_veri.csv`, `features.py`, `model.py` ve `tables.py` dosyalarının bulunduğundan emin olun.")
