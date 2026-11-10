@@ -3,8 +3,8 @@
 dashboard.py
 ============
 ASIMOPT - İnteraktif Model Değerlendirme, Dengesizlik Maliyeti ve DM Testi Paneli.
-Site açıldığında GitHub deposundaki birlesik_veri.csv dosyasını otomatik okur,
-features.py, model.py ve tables.py modüllerini çalıştırarak gerçek sonuçları gösterir.
+Site açıldığında GitHub deposundaki birlesik_veri.csv dosyasını (2022-2026, 35.088 saat)
+otomatik okur, features.py, model.py ve tables.py modüllerini çalıştırarak gerçek sonuçları gösterir.
 """
 
 import streamlit as st
@@ -44,23 +44,26 @@ with st.sidebar:
     st.header("⚙️ Analiz Ayarları")
     secilen_kaynak = st.selectbox(
         "Tahmin Edilecek Üretim Kaynağı:",
-        options=["ruzgar", "gunes", "uretim_toplam"],
+        options=["ruzgar", "gunes", "uretim_toplam", "dogalgaz", "barajli", "akarsu"],
         format_func=lambda x: {
             "ruzgar": "🌬️ Rüzgar Üretimi (MWh)",
             "gunes": "☀️ Güneş Üretimi (MWh)",
             "uretim_toplam": "🏭 Toplam Üretim (MWh)",
+            "dogalgaz": "🔥 Doğal Gaz Üretimi (MWh)",
+            "barajli": "💧 Barajlı Hidroelektrik (MWh)",
+            "akarsu": "🌊 Akarsu Üretimi (MWh)",
         }[x],
         index=0,
     )
 
     st.info(
-        "📌 **Bilgi:** Veri seti (`birlesik_veri.csv` - 35.088 saat) "
-        "doğrudan sistemden otomatik yüklenmektedir. "
-        "Tüm modeller `features.py`, `model.py` ve `tables.py` üzerinden canlı hesaplanır."
+        "📌 **2022–2026 Tam Veri Seti (35.088 Saat):**\n\n"
+        "• **Eğitim Seti (%80):** 2022–2025 arası (~27.916 saat) geçmiş verilerle yapay zeka modelleri eğitilir.\n\n"
+        "• **Test Seti (%20):** 2025–2026 arası (~6.980 saat) modelin hiç görmediği dönem üzerinde dengesizlik maliyetleri ve DM testi ölçülür."
     )
 
 try:
-    with st.spinner("35.088 saatlik veri işleniyor, 6 model eğitiliyor ve Diebold-Mariano testi hesaplanıyor..."):
+    with st.spinner("2022-2026 (35.088 saat) verisi işleniyor, 6 model eğitiliyor ve Diebold-Mariano testi hesaplanıyor..."):
         df_ham, analiz = modeli_onbellekli_calistir(secilen_kaynak)
 
     tablo1 = analiz["tablo1_performans"]
@@ -79,7 +82,11 @@ try:
     oracle_kazanc_tl = ref_satir["Toplam Dengesizlik Maliyeti (TL)"] - oracle_satir["Toplam Dengesizlik Maliyeti (TL)"]
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Toplam Veri Seti", f"{len(df_ham):,} Saat", f"Test Seti: {len(test_df):,} Saat")
+    col1.metric(
+        "Toplam Veri (2022–2026)",
+        f"{len(df_ham):,} Saat",
+        f"Eğitim: {len(df_ham) - len(test_df):,} | Test: {len(test_df):,}",
+    )
     col2.metric(
         "Sistem Yönü Tahmin Doğruluğu",
         f"%{ek['yon_tahmin_dogrulugu'] * 100:.2f}",
@@ -101,7 +108,7 @@ try:
     sekme1, sekme2, sekme3 = st.tabs([
         "📋 Rapor Tabloları ve DM Testi",
         "📊 Maliyet ve Tahmin Grafikleri",
-        "⚡ Piyasa Fiyatları ve τ* Analizi",
+        "⚡ 2022–2026 Tüm Veri Seti (Fiyat, Üretim ve τ*)",
     ])
 
     with sekme1:
@@ -157,7 +164,7 @@ try:
         fig_bar.update_traces(texttemplate="Tasarruf: %{text:.2f}%", textposition="outside")
         st.plotly_chart(fig_bar, use_container_width=True)
 
-        st.subheader("📈 Saatlik Üretim Tahmini Karşılaştırması (Test Seti Son 168 Saat / 1 Hafta)")
+        st.subheader("📈 Saatlik Üretim Tahmini Karşılaştırması (Son 168 Saat / 1 Hafta)")
         son_n = 168
         zaman_dilimi = test_df["ts"].iloc[-son_n:]
 
@@ -195,7 +202,40 @@ try:
         st.plotly_chart(fig_pred, use_container_width=True)
 
     with sekme3:
-        st.subheader("⚡ Gerçekleşmiş τ* ve Tahmin Edilen τ̂ Dinamikleri (Son 168 Saat)")
+        st.subheader("📅 2022–2026 Arası Dönem Seçimi (35.088 Saatlik Tam Veri)")
+        yil_secimi = st.selectbox(
+            "İncelenecek Yılı / Dönemi Seçin:",
+            options=["2022", "2023", "2024", "2025", "Son 30 Gün (720 Saat)"],
+            index=4,
+        )
+
+        if yil_secimi == "Son 30 Gün (720 Saat)":
+            plot_df = df_ham.tail(720)
+        else:
+            plot_df = df_ham[df_ham["ts"].dt.year == int(yil_secimi)]
+
+        st.subheader(f"📈 PTF, SMF, PDF ve NDF Fiyat Dinamikleri ({yil_secimi})")
+        fig_fiyat = go.Figure()
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PTF"], mode="lines", name="PTF", line=dict(color="blue")))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["SMF"], mode="lines", name="SMF", line=dict(color="orange"), opacity=0.7))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["NDF_neg"], mode="lines", name="NDF (Eksik Üretim Fiyatı)", line=dict(color="red", dash="dot")))
+        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PDF_poz"], mode="lines", name="PDF (Fazla Üretim Fiyatı)", line=dict(color="green", dash="dot")))
+        fig_fiyat.update_layout(hovermode="x unified", yaxis_title="Fiyat (TL/MWh)", xaxis_title="Tarih")
+        st.plotly_chart(fig_fiyat, use_container_width=True)
+
+        kaynaklar = ["dogalgaz", "ithal_komur", "barajli", "linyit", "ruzgar", "akarsu", "gunes"]
+        mevcut_kaynaklar = [k for k in kaynaklar if k in plot_df.columns]
+        if mevcut_kaynaklar:
+            st.subheader(f"🏭 Saatlik Enerji Üretim Dağılımı ({yil_secimi})")
+            fig_uretim = px.area(
+                plot_df,
+                x="ts",
+                y=mevcut_kaynaklar,
+                labels={"value": "Üretim (MWh)", "variable": "Kaynak", "ts": "Tarih"},
+            )
+            st.plotly_chart(fig_uretim, use_container_width=True)
+
+        st.subheader("⚡ Gerçekleşmiş τ* ve Tahmin Edilen τ̂ Dinamikleri (Test Dönemi Son 168 Saat)")
         fig_tau = go.Figure()
         fig_tau.add_trace(go.Scatter(
             x=zaman_dilimi,
@@ -215,16 +255,6 @@ try:
         fig_tau.add_hline(y=0.5, line_dash="dot", line_color="gray", annotation_text="Simetrik Eşik (τ = 0.5)")
         fig_tau.update_layout(hovermode="x unified", yaxis_title="Asimetri Parametresi (τ)", xaxis_title="Tarih")
         st.plotly_chart(fig_tau, use_container_width=True)
-
-        st.subheader("📈 PTF, SMF, PDF ve NDF Fiyat Dinamikleri (Son 720 Saat)")
-        plot_df = test_df.tail(720)
-        fig_fiyat = go.Figure()
-        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PTF"], mode="lines", name="PTF", line=dict(color="blue")))
-        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["SMF"], mode="lines", name="SMF", line=dict(color="orange"), opacity=0.7))
-        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["NDF_neg"], mode="lines", name="NDF (Eksik Üretim Fiyatı)", line=dict(color="red", dash="dot")))
-        fig_fiyat.add_trace(go.Scatter(x=plot_df["ts"], y=plot_df["PDF_poz"], mode="lines", name="PDF (Fazla Üretim Fiyatı)", line=dict(color="green", dash="dot")))
-        fig_fiyat.update_layout(hovermode="x unified", yaxis_title="Fiyat (TL/MWh)", xaxis_title="Tarih")
-        st.plotly_chart(fig_fiyat, use_container_width=True)
 
 except Exception as e:
     st.error(f"Analiz çalıştırılırken bir hata oluştu: {e}")
