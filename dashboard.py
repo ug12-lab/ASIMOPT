@@ -3,15 +3,23 @@
 dashboard.py
 ============
 ASIMOPT - İnteraktif Model Değerlendirme, Dengesizlik Maliyeti ve DM Testi Paneli.
-Site açıldığında GitHub deposundaki birlesik_veri.csv dosyasını (2022-2026, 35.088 saat)
-otomatik okur, features.py, model.py ve tables.py modüllerini çalıştırarak gerçek sonuçları gösterir.
 """
 
+import importlib
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+
+import features
+import model
+import tables
+
+# Streamlit Cloud önbelleğinde eski modül kalmasını önlemek için zorunlu yenileme
+importlib.reload(features)
+importlib.reload(model)
+importlib.reload(tables)
 
 from features import veriyi_yukle
 from tables import tum_analizi_calistir
@@ -32,7 +40,7 @@ st.markdown("---")
 
 
 @st.cache_data(show_spinner=False)
-def modeli_onbellekli_calistir(hedef_kaynak="ruzgar"):
+def modeli_onbellekli_calistir(hedef_kaynak="ruzgar", versiyon="v2"):
     """Modelleri eğitir ve sonuç tablolarını önbelleğe (cache) alır."""
     ham_df = veriyi_yukle()
     sonuclar = tum_analizi_calistir(ham_df, hedef_sutun=hedef_kaynak)
@@ -64,7 +72,7 @@ with st.sidebar:
 
 try:
     with st.spinner("2022-2026 (35.088 saat) verisi işleniyor, 6 model eğitiliyor ve Diebold-Mariano testi hesaplanıyor..."):
-        df_ham, analiz = modeli_onbellekli_calistir(secilen_kaynak)
+        df_ham, analiz = modeli_onbellekli_calistir(secilen_kaynak, versiyon="v2")
 
     tablo1 = analiz["tablo1_performans"]
     tablo2 = analiz["tablo2_dm_testi"]
@@ -73,7 +81,6 @@ try:
     tahminler = analiz["tahminler"]
     ek = analiz["ek_bilgiler"]
 
-    # Özet Metrik Kartları
     ref_satir = tablo1[tablo1["Model"] == "Sabit tau = 0.50 (Simetrik MAE)"].iloc[0]
     gercekci_satir = tablo1[tablo1["Model"] == "ASIMOPT Gerçekçi (Tahmin Edilen tau_hat)"].iloc[0]
     oracle_satir = tablo1[tablo1["Model"] == "ASIMOPT Üst Sınır / Oracle (Gerçekleşmiş tau*)"].iloc[0]
